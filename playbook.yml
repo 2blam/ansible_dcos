@@ -1,0 +1,224 @@
+---
+- hosts: nodes
+  remote_user: user
+  become_method: sudo
+  become: yes     
+  vars:
+    dockerRpmLocalSrcPath: <file_path_to>/docker-engine-1.9.1-1.el7.centos.x86_64.rpm
+    dockerRpmRemoteDestPath: <remotefile_path_to>/docker-engine-1.9.1-1.el7.centos.x86_64.rpm
+  tasks:
+      - name: disable sudo password
+        lineinfile: dest=/etc/sudoers
+                    create=yes
+                    line='{{item}}'
+        with_items:
+          - 'user ALL=(ALL) NOPASSWD: ALL'
+        become: yes
+        become_user: root      
+      - name: upgrade all packages
+        yum: name=* state=latest
+      - name: update overlay.conf
+        lineinfile: dest=/etc/modules-load.d/overlay.conf
+                    create=yes
+                    line='{{item}}'                    
+        with_items:
+          - 'overlay'
+      - name: restart machine
+        shell: sleep 2 && shutdown -r now "Ansible updates triggered"
+        async: 1
+        poll: 0
+        sudo: true
+        ignore_errors: true
+      - name: waiting for server to come back
+        local_action: wait_for host={{ inventory_hostname }} state=started delay=30 timeout=120
+        sudo: false
+      - name: update Docker repo
+        lineinfile: dest=/etc/yum.repos.d/docker.repo
+                    create=yes
+                    line='{{item}}'
+        with_items:
+          - '[dockerrepo]'
+          - 'name=Docker Repository'
+          - 'baseurl=https://yum.dockerproject.org/repo/main/centos/$releasever/'
+          - 'enabled=1'
+          - 'gpgcheck=1'
+          - 'gpgkey=https://yum.dockerproject.org/gpg'
+      - name: create docker.service.d folder
+        shell: mkdir -p /etc/systemd/system/docker.service.d 
+      - name: update override.conf
+        lineinfile: dest=/etc/systemd/system/docker.service.d/override.conf
+                    create=yes
+                    line='{{item}}'
+        with_items:
+          - '[Service]'
+          - 'ExecStart='
+          - 'ExecStart=/usr/bin/docker daemon --storage-driver=overlay -H fd://'
+      - name: copy  docker installation file
+        copy: src={{dockerRpmLocalSrcPath}} dest={{dockerRpmRemoteDestPath}} 
+      - name: install docker
+        yum: name={{dockerRpmRemoteDestPath}} state=present
+      - name: start and enable docker
+        shell: sudo systemctl start docker && sudo systemctl enable docker
+        become: yes
+        become_user: root
+      - name: stop and disable firewall
+        shell: sudo systemctl stop firewalld && sudo systemctl disable firewalld
+        become: yes
+        become_user: root
+      - name: install data compression tool
+        yum: name=tar state=latest
+      - yum: name=xz state=latest
+      - yum: name=unzip state=latest
+      - yum: name=curl state=latest
+      - yum: name=ipset state=latest
+      - name: update permission
+        shell: sudo sed -i s/SELINUX=enforcing/SELINUX=permissive/g /etc/selinux/config
+        become: yes
+        become_user: root 
+      - name: update group
+        shell: sudo groupadd nogroup
+      - name: update sysctl
+        shell: sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
+      - shell: sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
+      - name: Generating RSA key
+        user: name=user generate_ssh_key=yes 
+      - name: restart machine
+        shell: sleep 2 && shutdown -r now "Ansible updates triggered"
+        async: 1
+        poll: 0
+        sudo: true
+        ignore_errors: true
+      - name: waiting for server to come back
+        local_action: wait_for host={{ inventory_hostname }} state=started delay=30 timeout=120
+        sudo: false
+      - name: time sync
+        yum: name=ntp 
+      - yum: name=ntpdate 
+      - yum: name=ntp-doc
+      - name: chkconfig on
+        shell: sudo chkconfig ntpd on
+        become: yes
+        become_user: root 
+      - name: update time
+        shell: sudo ntpdate pool.ntp.org
+        become: yes
+        become_user: root
+      - name: update limits.conf
+        lineinfile: dest=/etc/security/limits.conf
+                    create=yes
+                    line='{{item}}'
+        with_items:
+          - 'root soft memlock unlimited'
+          - 'root hard memlock unlimited'
+          - 'root - nofile unlimited'
+          - 'root - nproc 32768'
+      - name: update 90-nproc.conf
+        lineinfile: dest=/etc/security/limits.d/90-nproc.conf
+                    create=yes
+                    line='{{item}}'
+        with_items:
+          - '* - nproc 32768'
+      - name: update sysctl.conf
+        lineinfile: dest=/etc/sysctl.conf
+                    create=yes
+                    line='{{item}}'
+        with_items:
+          - 'vm.max_map_count = 131072' 
+          - 'vm.swappiness = 0'
+      - name: restart sysctl
+        shell: sudo sysctl -p
+        become: yes
+        become_user: root
+
+- hosts: bootstrap
+  remote_user: user
+  become_method: sudo
+  become: yes   
+  vars:
+    dockerRpmLocalSrcPath: <file_path_to>/docker-engine-1.9.1-1.el7.centos.x86_64.rpm
+    dockerRpmRemoteDestPath: <remote_file_path_to>/docker-engine-1.9.1-1.el7.centos.x86_64.rpm
+    userpw: <remote_user_password>
+    sshKeyPath: <path_to>/.ssh/id_rsa.pub
+  tasks:
+      - name: disable sudo password
+        lineinfile: dest=/etc/sudoers
+                    create=yes
+                    line='{{item}}'
+        with_items:
+          - 'user ALL=(ALL) NOPASSWD: ALL'
+        become: yes
+        become_user: root
+      - name: yum install epel-release
+        yum: name=epel-release state=latest   
+      - name: yum install python-pip
+        yum: name=python-pip state=latest 
+      - name: pip install virtualenv
+        shell: pip install virtualenv
+      - name: upgrade all packages
+        yum: name=* state=latest
+      - name: update overlay.conf
+        lineinfile: dest=/etc/modules-load.d/overlay.conf
+                    create=yes
+                    line='{{item}}'                    
+        with_items:
+          - 'overlay'
+      - name: restart machine
+        shell: sleep 2 && shutdown -r now "Ansible updates triggered"
+        async: 1
+        poll: 0
+        sudo: true
+        ignore_errors: true
+      - name: waiting for server to come back
+        local_action: wait_for host={{ inventory_hostname }} state=started delay=30 timeout=120
+        sudo: false
+      - name: update Docker repo
+        lineinfile: dest=/etc/yum.repos.d/docker.repo
+                    create=yes
+                    line='{{item}}'
+        with_items:
+          - '[dockerrepo]'
+          - 'name=Docker Repository'
+          - 'baseurl=https://yum.dockerproject.org/repo/main/centos/$releasever/'
+          - 'enabled=1'
+          - 'gpgcheck=1'
+          - 'gpgkey=https://yum.dockerproject.org/gpg'
+      - name: create docker.service.d folder
+        shell: mkdir -p /etc/systemd/system/docker.service.d 
+      - name: update override.conf
+        lineinfile: dest=/etc/systemd/system/docker.service.d/override.conf
+                    create=yes
+                    line='{{item}}'
+        with_items:
+          - '[Service]'
+          - 'ExecStart='
+          - 'ExecStart=/usr/bin/docker daemon --storage-driver=overlay -H fd://'
+      - name: copy  docker installation file
+        copy: src={{dockerRpmLocalSrcPath}} dest={{dockerRpmRemoteDestPath}} 
+      - name: install docker
+        yum: name={{dockerRpmRemoteDestPath}} state=present
+      - name: start and enable docker
+        shell: sudo systemctl start docker && sudo systemctl enable docker
+        become: yes
+        become_user: root
+      - name: stop and disable firewall
+        shell: sudo systemctl stop firewalld && sudo systemctl disable firewalld
+        become: yes
+        become_user: root
+      - name: pull nginx
+        shell: docker pull nginx
+        become: yes
+        become_user: root
+      - name: Generating RSA key
+        user: name=user generate_ssh_key=yes 
+      - name: install sshpass
+        yum: name=sshpass  state=latest
+      - name: ssh-copy-id node2
+        shell: sshpass -p {{userpw}} ssh-copy-id -o StrictHostKeyChecking=no -i {{sshKeyPath}} user@node2
+      - name: ssh-copy-id node3
+        shell: sshpass -p {{userpw}} ssh-copy-id -o StrictHostKeyChecking=no -i {{sshKeyPath}} user@node3
+      - name: ssh-copy-id node4
+        shell: sshpass -p {{userpw}} ssh-copy-id -o StrictHostKeyChecking=no -i {{sshKeyPath}} user@node4
+      - name: ssh-copy-id node5
+        shell: sshpass -p {{userpw}} ssh-copy-id -o StrictHostKeyChecking=no -i {{sshKeyPath}} user@node5
+      - name: ssh-copy-id node6
+        shell: sshpass -p {{userpw}} ssh-copy-id -o StrictHostKeyChecking=no -i {{sshKeyPath}} user@node6

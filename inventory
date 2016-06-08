@@ -1,0 +1,19 @@
+[bootstrap]
+node1 ansible_host=192.168.199.10
+
+[nodes]
+node2 ansible_host=192.168.199.11
+node3 ansible_host=192.168.199.12
+node4 ansible_host=192.168.199.13
+node5 ansible_host=192.168.199.14
+node6 ansible_host=192.168.199.15
+
+
+[allnode:children]
+bootstrap
+nodes
+
+[allnode:vars]
+ansible_user=user
+ansible_ssh_pass=user
+ansible_sudo_pass=user
